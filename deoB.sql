@@ -53,69 +53,15 @@ where season = '2024/25';
 
 --2. br utakmica po mesecima, br golova po mesecima,prosecan br golova po utakmici usvakom mesecu
 -- koji mesec se izdvaja : izdvaja se jul jer nema utakmica
---januar: 52
-select count (*)
+--januar: 51
+select month(kickoff_ts) as mesec,
+count(*) as br_utakmica,
+sum(home_goals + away_goals) as br_golova,
+round(avg(home_goals + away_goals), 2) as prosecno_golova
 from matches
-where kickoff_ts between '2024-01-01' and '2024-01-31';
---februar:41
-select count (*)
-from matches
-where kickoff_ts between '2024-02-01' and '2024-02-29';
-
---mart 38
-select count (*)
-from matches
-where kickoff_ts between '2024-03-01' and '2024-03-31';
-
---april 41
-
-select count (*)
-from matches
-where kickoff_ts between '2024-04-01' and '2024-04-30';
-
---maj 20
-
-select count (*)
-from matches
-where kickoff_ts between '2024-05-01' and '2024-05-31';
-
---jun  20
-select count (*)
-from matches
-where kickoff_ts between '2024-06-01' and '2024-06-30';
-
---jul 0
-
-select count (*)
-from matches
-where kickoff_ts between '2024-07-01' and '2024-07-31';
-
---avg 20
-select count (*)
-from matches
-where kickoff_ts between '2024-08-01' and '2024-08-31';
-
---sept 31
-
-select count (*)
-from matches
-where kickoff_ts between '2024-09-01' and '2024-09-30';
-
---okt 30
-select count (*)
-from matches
-where kickoff_ts between '2024-10-01' and '2024-10-31';
-
---nov 29
-select count (*)
-from matches
-where kickoff_ts between '2024-11-01' and '2024-11-30';
-
---dec 52
-select count (*)
-from matches
-where kickoff_ts between '2024-12-01' and '2024-12-31';
-
+where season = '2024/25'
+group by month(kickoff_ts)
+order by mesec;
 
 --3  Публика: просечна посета и попуњеност по стадиону; утакмице без податка о посети и утакмица без публике
 
@@ -124,26 +70,29 @@ where kickoff_ts between '2024-12-01' and '2024-12-31';
 SELECT ROUND(AVG(m.attendance)) AS prosek,
        ROUND(AVG(100 * m.attendance / s.capacity), 1) AS popunjenost_pct,
        COUNT(*) - COUNT(m.attendance) AS bez_podatka,
-       COUNT(attendance = 0)  as bez_publike
+       sum(case when m.attendance = 0 then 1 else 0 end) as bez_publike,
+       s.stadium_name
 FROM matches m
 JOIN teams    t ON m.home_team_id = t.team_id
 JOIN stadiums s ON m.stadium_id   = s.stadium_id
-WHERE m.season = '2024/25' AND m.status = 'played' ;
+WHERE m.season = '2024/25' AND m.status = 'played'
+group by s.stadium_id, s.stadium_name, s.capacity; 
 
 
 --4. Судије: за сваког судију број утакмица и картони по утакмици
 --sudije i br utakmica
-select r.referee_id, r.referee_name, count(m.match_id) as br_utakmica 
+select r.referee_id, r.referee_name, count(distinct m.match_id) as br_utakmica,
+count(case when me.event_type in ('yellow_card', 'second_yellow', 'red_card')
+           then 1 end) as br_kartona,
+round(1.0 * count(case when me.event_type in ('yellow_card', 'second_yellow', 'red_card')
+                     then 1 end) / count(distinct m.match_id), 2
+) as kartoni_po_utakmici
 from matches m
 join match_events me on me.match_id = m.match_id
 join referees r on r.referee_id = m.referee_id
 
 group by r.referee_id, r.referee_name;
 
---br kartona po utakmici 
-SELECT match_id, sum(me.yellow_card + second_yellow + red_card) as br_kartona
-from matches m
-join match_events me on me.match_id = m.match_id
 
 
 --5. Играчи: пет најбољих стрелаца и пет најбољих асистената.
@@ -170,3 +119,30 @@ GROUP BY p.player_id, p.first_name, p.last_name
 ORDER BY asistencije DESC
 LIMIT 5;
 
+
+--6.Kvalitet podataka: 
+--utakmice bez trenera: Za utakmicu Westmere Towna (1. mart 2025.) nije evidentiran trener. Prethodni trener završio je angažman 27. februara, a novi je počeo 3. marta 2025
+
+select m.match_id, t.team_name, m.kickoff_ts
+from matches m
+join teams t on t.team_id = m.home_team_id
+left join manager_spells ms on ms.team_id = m.home_team_id
+   and cast(m.kickoff_ts as date) between ms.start_date
+   and coalesce(ms.end_date, date'9999-12-31')
+where m.season = '2024/25'and ms.manager_name is null;
+
+
+select *
+from manager_spells ms
+join teams t on t.team_id = ms.team_id
+where t.team_name = 'Westmere Town'
+order by ms.start_date;
+
+---- problem 2: dogadjaji sa nepostojecim igracem
+
+--Pronađena su dva događaja: 1024 i 1634 povezana sa igračem čiji je player_id = 99999 koji ne postoji u tabeli players
+
+select me.event_id, me.match_id,  me.player_id
+from match_events me
+left join players p on me.player_id = p.player_id
+where me.player_id is not null and p.player_id is null;
